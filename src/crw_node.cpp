@@ -27,6 +27,8 @@
 
 #include "fordyca/controller/reactive/d0/crw_controller.hpp"
 
+#include "cosm/ros/topic.hpp"
+
 /*******************************************************************************
  * Namespaces/Decls
  ******************************************************************************/
@@ -48,18 +50,30 @@ void ros_init(int argc, char** argv) {
 std::unique_ptr<fcrd0::crw_controller> controller_init(void) {
   ros::NodeHandle nh("~");
   std::string param_file;
-  nh.getParam("param_file", param_file);
+  auto ros_ns = ::ros::this_node::getNamespace();
+
+  auto id = rtypes::type_uuid(std::atoi(ros_ns.c_str() +
+                                        1 +
+                                        cpal::kRobotNamePrefix.size() +
+                                        1));
+  auto pal_ns = cros::to_ns(id);
+  ROS_ASSERT_MSG(ros_ns == pal_ns,
+                 "ROS robot namespace != configure PAL robot prefix: %s != %s",
+                 ros_ns.c_str(),
+                 pal_ns.c_str());
+  nh.getParam("/sierra/experiment/param_file", param_file);
   ROS_INFO("Loading CRW params from %s", param_file.c_str());
+
   std::ifstream in;
   in.open(param_file, std::ios::in);
   ticpp::Document doc;
   in >> doc;
 
   auto crw = std::make_unique<fcrd0::crw_controller>();
+  crw->entity_id(id);
   auto* root = doc.FirstChildElement();
-  ticpp::Iterator<ticpp::Element> it("params");
-  it = it.begin(root);
-  crw->init(*it);
+  auto* crw_params = root->FirstChildElement("crw_controller");
+  crw->init(*crw_params);
   return crw;
 } /* controller_init() */
 
@@ -71,8 +85,17 @@ int main(int argc, char** argv) {
   auto crw = controller_init();
 
   /* loop forever */
-  while (ros::ok()) {
+  size_t i = 0;
+  while (::ros::ok()) {
+    /* !!!
+     * This is only here for initial bringup; actually belongs in the loop
+     * functions
+     * !!!
+     */
+    crw->sensing_update(rtypes::timestep(i++),
+                               rtypes::discretize_ratio(0.2));
     crw->control_step();
+    ::ros::spinOnce();
   } /* while() */
 
   return 0;

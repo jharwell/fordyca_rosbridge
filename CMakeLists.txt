@@ -15,7 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
-find_package(fordyca REQUIRED)
+find_package(fordyca-ros-turtlebot3 REQUIRED)
 
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
@@ -148,7 +148,7 @@ add_executable(${PROJECT_NAME}_crw_node src/crw_node.cpp)
 ## Specify libraries to link a library or executable target against
 target_link_libraries(${PROJECT_NAME}_crw_node
   ${catkin_LIBRARIES}
-  fordyca::fordyca
+  fordyca-ros-turtlebot3::fordyca-ros-turtlebot3
 )
 
 #############
@@ -167,9 +167,9 @@ target_link_libraries(${PROJECT_NAME}_crw_node
 
 ## Mark executables for installation
 ## See http://docs.ros.org/melodic/api/catkin/html/howto/format1/building_executables.html
-# install(TARGETS ${PROJECT_NAME}_node
-#   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-# )
+install(TARGETS ${PROJECT_NAME}_crw_node
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 
 ## Mark libraries for installation
 ## See http://docs.ros.org/melodic/api/catkin/html/howto/format1/building_libraries.html
