@@ -1,12 +1,12 @@
 /**
- * \file crw_node.cpp
+ * \file d0_master_node.cpp
  *
  * \copyright 2021 John Harwell, All rights reserved.
  *
  * This file is part of ROSBRIDGE.
  *
- * ROSBRIDGE is free software: you can redistribute it and/or modify it under the
- * terms of the GNU General Public License as published by the Free Software
+ * ROSBRIDGE is free software: you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License as published by the Free Software
  * Foundation, either version 3 of the License, or (at your option) any later
  * version.
  *
@@ -21,15 +21,16 @@
 /*******************************************************************************
  * Includes
  ******************************************************************************/
-#include "crw_node.hpp"
+#include "d0_master_node.hpp"
 
+#include <ros/ros.h>
+#include <ticpp/ticpp.h>
 #include <fstream>
 
 #include "cosm/ros/topic.hpp"
 #include "cosm/ros/config/server/sierra_parser.hpp"
 
-#include "fordyca/controller/reactive/d0/crw_controller.hpp"
-#include "fordyca/ros/support/d0/d0_robot_manager.hpp"
+#include "fordyca/ros/support/d0/d0_swarm_manager.hpp"
 
 /*******************************************************************************
  * Namespaces/Decls
@@ -39,52 +40,22 @@ NS_START(rosbridge);
 /*******************************************************************************
  * Constructors/Destructors
  ******************************************************************************/
-crw_node::crw_node(const cros::config::sierra_config* config,
+d0_master_node::d0_master_node(const cros::config::sierra_config* config,
                    const ticpp::Element& root)
-    : ER_CLIENT_INIT("rosbridge.crw_node"),
+    : ER_CLIENT_INIT("rosbridge.d0_master_node"),
       mc_config(*config),
-      m_controller(controller_init(root)),
-      m_manager(manager_init(config, root, m_controller.get())) {}
+      m_manager(manager_init(config, root)) {}
 
-crw_node::~crw_node(void) = default;
+d0_master_node::~d0_master_node(void) = default;
+
 
 /*******************************************************************************
  * Member Functions
  ******************************************************************************/
-std::unique_ptr<fcrd0::crw_controller> crw_node::controller_init(
-    const ticpp::Element& params) {
-  ::ros::NodeHandle nh("~");
-
-  auto ros_ns = ::ros::this_node::getNamespace();
-
-  auto id = rtypes::type_uuid(std::atoi(ros_ns.c_str() +
-                                        1 + /* move past '/' */
-                                        cpal::kRobotNamePrefix.size()));
-  ER_INFO("Computed ROS robot id=%d, ROS namespace=%s",
-          id.v(),
-          ros_ns.c_str());
-  auto pal_ns = cros::to_ns(id);
-  ROS_ASSERT_MSG(ros_ns == pal_ns,
-                 "ROS robot namespace != configure PAL robot prefix: %s != %s",
-                 ros_ns.c_str(),
-                 pal_ns.c_str());
-
-
-  auto crw = std::make_unique<fcrd0::crw_controller>();
-  crw->entity_id(id);
-
-  auto* controller_params = params.FirstChildElement("controllers");
-  auto* crw_params = controller_params->FirstChildElement("crw_controller");
-  crw->init(*crw_params);
-  return crw;
-} /* controller_init() */
-
-std::unique_ptr<frsd0::d0_robot_manager> crw_node::manager_init(
+std::unique_ptr<frsd0::d0_swarm_manager> d0_master_node::manager_init(
     const cros::config::sierra_config* config,
-    const ticpp::Element& xml,
-    fcrd0::crw_controller* c) {
-  auto robot_ns = ::ros::this_node::getNamespace();
-  auto lf = std::make_unique<frsd0::d0_robot_manager>(robot_ns, config, c);
+    const ticpp::Element& xml) {
+  auto lf = std::make_unique<frsd0::d0_swarm_manager>(config);
 
   auto* root = xml.FirstChildElement("loop_functions");
   lf->init(*root);
@@ -92,40 +63,37 @@ std::unique_ptr<frsd0::d0_robot_manager> crw_node::manager_init(
   return lf;
 } /* manager_init() */
 
-void crw_node::barrier_callback(const std_msgs::Empty::ConstPtr& msg) {
-  ER_INFO("Received experiment start signal");
-  m_start = true;
-} /* barrier_callback() */
-
-void crw_node::run(void) {
-  /* set controller rate */
+void d0_master_node::run(void) {
+  /* set loop function rate */
   ::ros::Rate rate(mc_config.experiment.ticks_per_sec.v());
 
+  /*
+   * When we get here, all robots are up (we have subscribed to all their
+   * metrics), so we are OK to start the experiment.
+   */
   ER_INFO("Experiment start barrier: %d", mc_config.experiment.barrier_start);
-
   if (mc_config.experiment.barrier_start) {
     ::ros::NodeHandle nh;
-    /* leading '/' -> we require this message to be sent from the master node */
-    auto sub = nh.subscribe("/sierra/experiment/start",
-                            1000,
-                            &crw_node::barrier_callback,
-                            this);
-    while (::ros::ok() && !m_start) {
-      ER_DEBUG("Waiting for signal to start experiment");
-      ::ros::spinOnce();
-      ::ros::Duration(1.0).sleep();
-    }
+    auto pub = nh.advertise<std_msgs::Empty>("/sierra/experiment/start",
+                                             10,
+                                             true);
+    pub.publish(std_msgs::Empty());
+    ::ros::spinOnce();
+    ::ros::Duration(1.0).sleep();
   }
-  ER_INFO("Beginning main loop");
+
   /* loop until done */
-  while (::ros::ok() && !m_manager->experiment_finished()) {
+  ER_INFO("Entering main loop");
+  while (!m_manager->experiment_finished()) {
+    if (!::ros::ok()) {
+      ER_ERR("::ros::ok() failed--exiting early");
+      break;
+    }
+
     /* update current tick and other such tasks */
     m_manager->pre_step();
 
-    /* run controller */
-    m_controller->control_step();
-
-    /* collect metrics from controller */
+    /* collect metrics all controllers */
     m_manager->post_step();
 
     /*
@@ -137,7 +105,6 @@ void crw_node::run(void) {
   } /* while() */
 
   ER_INFO("Finished main loop");
-
   m_manager->destroy();
 } /* run() */
 
@@ -148,7 +115,7 @@ NS_END(rosbridge);
  * Non-Member Functions
  ******************************************************************************/
 void ros_init(int argc, char** argv) {
-  ::ros::init(argc, argv, "crw");
+  ::ros::init(argc, argv, "d0_master");
 }
 
 int main(int argc, char** argv) {
@@ -168,15 +135,14 @@ int main(int argc, char** argv) {
   in >> doc;
   auto* root = doc.FirstChildElement();
 
-  /* Create node, spinning to let everything come up */
-  rosbridge::crw_node node(config, *root);
+  /* initialize loop functions */
+  rosbridge::d0_master_node node(config, *root);
   ::ros::spinOnce();
 
-  /* GO GO POWER RANGERS! */
   node.run();
 
   /* all done! */
-  ROS_INFO("Initiating crw_node shutdown");
+  ROS_INFO("Initiating d0_master_node shutdown");
   ::ros::shutdown();
 
   return 0;
