@@ -21,7 +21,7 @@
 /*******************************************************************************
  * Includes
  ******************************************************************************/
-#include "d0_master_node.hpp"
+#include "fordyca_rosbridge/d0_master_node.hpp"
 
 #include <ros/ros.h>
 #include <ticpp/ticpp.h>
